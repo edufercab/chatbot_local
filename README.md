@@ -71,7 +71,7 @@ docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi
 En el host:
 ```bash
 echo 'FROM llama3.2
-SYSTEM "Eres un profesor amable que responde con ejemplos sencillos. Siempre debes explicar como si enseñaras a un estudiante de secundaria."' > Modelfile_profesor
+SYSTEM "Eres un profesor amable que responde con ejemplos sencillos. Siempre debes explicar como si enseñaras a un estudiante de secundaria. Arranca siempre pidiendo a los estudiantes que presenten atencion"' > Modelfile_profesor
 ```
 
 Copiarlo al contenedor:
@@ -88,7 +88,7 @@ ollama create profesor-amable -f /root/Modelfile_profesor
 En el host:
 ```bash
 echo 'FROM llama3.1:8b
-SYSTEM "Eres un experto en razonamiento lógico. Siempre explica tus respuestas paso a paso, mostrando el razonamiento detrás de cada conclusión."' > Modelfile_razonador
+SYSTEM "Eres un experto en razonamiento lógico. Siempre explica tus respuestas paso a paso, mostrando el razonamiento detrás de cada conclusión. Arranca siempre pidiendo a los universitarios que se callen"' > Modelfile_razonador
 ```
 
 Copiar y crear en el contenedor:
@@ -109,18 +109,17 @@ docker exec -it ollama-tmp bash -c "ollama create razonador -f /root/Modelfile_r
    ```bash
    docker commit ollama-tmp ollama-offline
    ```
-
-3. (Opcional) Exportar a un archivo `.tar`:
+## 🔹 Eliminar imagen online
    ```bash
-   docker save -o ollama-offline.tar ollama-offline
-   # Importar en otra máquina:
-   # docker load -i ollama-offline.tar
+   docker stop ollama-tmp
+   docker rm ollama-tmp
+   docker rmi ollama/ollama:latest
    ```
 
 ---
 
-## 🔹 Usar Ollama en modo offline
-### Opción A — Modo servidor estable (API o chat)
+
+## 🔹 Usar Ollama en modo offline (servidor estable)
 Levantar el servidor Ollama sin internet:
 ```bash
 docker run -d --network=none --gpus all -p 11434:11434 --name ollama-off ollama-offline
@@ -131,15 +130,79 @@ Entrar al chat con tu modelo:
 docker exec -it ollama-off ollama run profesor-amable
 ```
 
-### Opción B — Atajo: chat directo en un solo comando
-Con modelo `profesor-amable`:
+O con el modelo de razonamiento:
 ```bash
-docker run -it --network=none --gpus all --rm --entrypoint="" ollama-offline bash -c "ollama serve & sleep 2 && ollama run profesor-amable"
+docker exec -it ollama-off ollama run razonador
 ```
 
-Con modelo `razonador`:
+---
+
+## 🔹 Script de arranque recomendado
+Puedes automatizar todo con un script `ollama_chat.sh`:
+
 ```bash
-docker run -it --network=none --gpus all --rm --entrypoint="" ollama-offline bash -c "ollama serve & sleep 2 && ollama run razonador"
+#!/bin/bash
+
+# Script para arrancar Ollama offline y entrar al chat con un modelo
+
+MODEL=${1:-profesor-amable}   # Si no se pasa argumento, usa profesor-amable por defecto
+CONTAINER_NAME=ollama-off
+IMAGE_NAME=ollama-offline
+
+# Comprobar si el contenedor ya está corriendo
+if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
+    echo "✅ El servidor Ollama ya está corriendo en el contenedor $CONTAINER_NAME"
+else
+    echo "🚀 Arrancando servidor Ollama offline..."
+    docker run -d --network=none --gpus all -p 11434:11434 --name $CONTAINER_NAME $IMAGE_NAME
+fi
+
+# Entrar al chat con el modelo
+echo "💬 Iniciando chat con el modelo: $MODEL"
+docker exec -it $CONTAINER_NAME ollama run $MODEL
+```
+
+Dar permisos de ejecución:
+```bash
+chmod +x ollama_chat.sh
+```
+
+Uso:
+```bash
+./ollama_chat.sh           # arranca chat con profesor-amable
+./ollama_chat.sh razonador # arranca chat con el modelo de razonamiento
+```
+
+---
+
+## 🔹 Actualizar los prompts de los modelos
+Si quieres modificar el comportamiento de un modelo (por ejemplo, cambiar su estilo de respuesta o añadir instrucciones nuevas):
+
+1. **Editar el Modelfile** en el host.  
+   Ejemplo, para actualizar el profesor amable:
+   ```bash
+   echo 'FROM llama3.2
+   SYSTEM "Eres un profesor amable que responde con ejemplos claros y prácticos."' > Modelfile_profesor
+   ```
+
+2. **Copiarlo al contenedor** donde corre Ollama:
+   ```bash
+   docker cp Modelfile_profesor ollama-off:/root/Modelfile_profesor
+   ```
+
+3. **Recrear el modelo dentro del contenedor**:
+   ```bash
+   docker exec -it ollama-off ollama create profesor-amable -f /root/Modelfile_profesor
+   ```
+
+4. **Verificar que aparece actualizado**:
+   ```bash
+   docker exec -it ollama-off ollama list
+   ```
+
+⚠️ Importante: si luego quieres que el cambio quede guardado para siempre en la imagen `ollama-offline`, tendrás que hacer un nuevo commit:
+```bash
+docker commit ollama-off ollama-offline
 ```
 
 ---
@@ -147,4 +210,5 @@ docker run -it --network=none --gpus all --rm --entrypoint="" ollama-offline bas
 ## 🔹 Notas finales
 - `--network=none` garantiza que el contenedor funcione **100% offline**.  
 - Si no tienes GPU, quita `--gpus all`.  
-- Los modelos añadidos con `ollama create` quedan embebidos en la imagen `ollama-offline`.  
+- Los modelos añadidos o actualizados con `ollama create` quedan embebidos en la imagen `ollama-offline` tras un `docker commit`.  
+
