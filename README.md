@@ -135,19 +135,24 @@ O con el modelo de razonamiento:
 docker exec -it ollama-off ollama run razonador
 ```
 
----
-
-## 🔹 Script de arranque recomendado
-Puedes automatizar todo con un script `ollama_chat.sh`:
+## 🔹 Script de arranque con prompts embebidos
+En lugar de usar `Modelfiles` externos, puedes gestionar los prompts directamente en el script.  
+Crea el archivo `~/.ollama_chat.sh` con este contenido:
 
 ```bash
 #!/bin/bash
 
-# Script para arrancar Ollama offline y entrar al chat con un modelo
-
-MODEL=${1:-profesor-amable}   # Si no se pasa argumento, usa profesor-amable por defecto
+MODEL=${1:-profesor-amable}   # Modelo por defecto
 CONTAINER_NAME=ollama-off
 IMAGE_NAME=ollama-offline
+
+# --- DEFINICIÓN DE PROMPTS ---
+PROMPT_PROFESOR='FROM llama3.2
+SYSTEM "Eres un profesor amable que responde con ejemplos sencillos. Siempre debes explicar como si enseñaras a un estudiante de secundaria."'
+
+PROMPT_RAZONADOR='FROM llama3.1:8b
+SYSTEM "Eres un experto en razonamiento lógico. Siempre explica tus respuestas paso a paso, mostrando el razonamiento detrás de cada conclusión. Arranca siempre pidiendo a los universitarios que se callen."'
+# -----------------------------
 
 # Comprobar si el contenedor ya está corriendo
 if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
@@ -155,60 +160,55 @@ if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
 else
     echo "🚀 Arrancando servidor Ollama offline..."
     docker run -d --network=none --gpus all -p 11434:11434 --name $CONTAINER_NAME $IMAGE_NAME
+    sleep 2
 fi
 
-# Entrar al chat con el modelo
+# Crear los Modelfiles directamente dentro del contenedor
+echo "$PROMPT_PROFESOR" | docker exec -i $CONTAINER_NAME tee /root/Modelfile_profesor >/dev/null
+docker exec -it $CONTAINER_NAME ollama create profesor-amable -f /root/Modelfile_profesor
+
+echo "$PROMPT_RAZONADOR" | docker exec -i $CONTAINER_NAME tee /root/Modelfile_razonador >/dev/null
+docker exec -it $CONTAINER_NAME ollama create razonador -f /root/Modelfile_razonador
+
+# Entrar al chat con el modelo elegido
 echo "💬 Iniciando chat con el modelo: $MODEL"
 docker exec -it $CONTAINER_NAME ollama run $MODEL
 ```
 
 Dar permisos de ejecución:
 ```bash
-chmod +x ollama_chat.sh
-```
-
-Uso:
-```bash
-./ollama_chat.sh           # arranca chat con profesor-amable
-./ollama_chat.sh razonador # arranca chat con el modelo de razonamiento
+chmod +x ~/.ollama_chat.sh
 ```
 
 ---
 
-## 🔹 Actualizar los prompts de los modelos
-Si quieres modificar el comportamiento de un modelo (por ejemplo, cambiar su estilo de respuesta o añadir instrucciones nuevas):
-
-1. **Editar el Modelfile** en el host.  
-   Ejemplo, para actualizar el profesor amable:
-   ```bash
-   echo 'FROM llama3.2
-   SYSTEM "Eres un profesor amable que responde con ejemplos claros y prácticos."' > Modelfile_profesor
-   ```
-
-2. **Copiarlo al contenedor** donde corre Ollama:
-   ```bash
-   docker cp Modelfile_profesor ollama-off:/root/Modelfile_profesor
-   ```
-
-3. **Recrear el modelo dentro del contenedor**:
-   ```bash
-   docker exec -it ollama-off ollama create profesor-amable -f /root/Modelfile_profesor
-   ```
-
-4. **Verificar que aparece actualizado**:
-   ```bash
-   docker exec -it ollama-off ollama list
-   ```
-
-⚠️ Importante: si luego quieres que el cambio quede guardado para siempre en la imagen `ollama-offline`, tendrás que hacer un nuevo commit:
+## 🔹 Alias para usar el script
+Edita tu `~/.bashrc` y añade al final:
 ```bash
-docker commit ollama-off ollama-offline
+alias ollama='~/.ollama_chat.sh'
 ```
+
+Recarga la configuración:
+```bash
+source ~/.bashrc
+```
+
+---
+
+## 🔹 Uso
+- Chat con el modelo **profesor-amable** (por defecto):
+  ```bash
+  ollama
+  ```
+
+- Chat con el modelo **razonador**:
+  ```bash
+  ollama razonador
+  ```
 
 ---
 
 ## 🔹 Notas finales
 - `--network=none` garantiza que el contenedor funcione **100% offline**.  
 - Si no tienes GPU, quita `--gpus all`.  
-- Los modelos añadidos o actualizados con `ollama create` quedan embebidos en la imagen `ollama-offline` tras un `docker commit`.  
-
+- Los prompts se gestionan directamente desde el script, lo que hace más fácil actualizar el comportamiento de los modelos.  
